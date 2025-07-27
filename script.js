@@ -1,6 +1,7 @@
 // script.js
-let gameRunning = false;           // ← menu gate
-let selectedCharacter = 'hank';    // default character
+let gameRunning = false;             // ← menu gate
+let selectedCharacter = 'hank';      // default character
+let highscore = parseInt(localStorage.getItem('dodgeCurveballHighscore') || '0', 10);
 
 document.addEventListener('DOMContentLoaded', () => {
   /* ——— Character‑select handlers ——— */
@@ -18,20 +19,24 @@ document.addEventListener('DOMContentLoaded', () => {
     charH.classList.remove('selected');
   });
 
+  /* ——— Show stored highscore ——— */
+  const hsEl = document.getElementById('highscore');
+  if (hsEl) hsEl.innerText = highscore;
+
   /* ——— Menu glue ——— */
-  const menu     = document.getElementById('menu');
-  const startBtn = document.getElementById('startGame');
-  const playerImage = new Image();
+  const menu       = document.getElementById('menu');
+  const startBtn   = document.getElementById('startGame');
+  const playerImage= new Image();
 
   if (startBtn) {
     startBtn.addEventListener('click', () => {
-      menu.style.display    = 'none';
-      playerImage.src       = selectedCharacter + '.png';
-      gameRunning           = true;
-      lastTime              = performance.now();  // reset timer
+      menu.style.display  = 'none';
+      playerImage.src     = selectedCharacter + '.png';
+      gameRunning         = true;
+      lastTime            = performance.now();  // reset timer
     });
   } else {
-    gameRunning       = true;                    // no menu present
+    gameRunning       = true;                  // no menu present
     playerImage.src   = selectedCharacter + '.png';
   }
 
@@ -135,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
     score++;
   }
 
-  // spawn spikes curving right, ending at 30% of screen width
+  // spawn spikes curving right
   function spawnSpikes(ax, ay, parentSpeed) {
     const travelDist = cw * 0.245;
     const spikeSpeed = parentSpeed * speedFactor;
@@ -232,6 +237,14 @@ document.addEventListener('DOMContentLoaded', () => {
             dyp = b.y - player.y,
             r   = (b.type==='spike' ? ballRadius/3 : ballRadius) + player.radius;
       if (dxp*dxp + dyp*dyp < r*r) {
+        // check for new highscore before resetting
+        const finalScore = score;
+        if (finalScore > highscore) {
+          highscore = finalScore;
+          localStorage.setItem('dodgeCurveballHighscore', highscore);
+          document.getElementById('highscore').innerText = highscore;
+        }
+
         score = 0;
         spawnInterval = initialSpawnInterval;
         spawnTimer    = 0;
