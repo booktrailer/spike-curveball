@@ -1,6 +1,6 @@
 // script.js
-let gameRunning = false;   // ← menu gate
-let selectedCharacter = 'hank';  // default character
+let gameRunning = false;           // ← menu gate
+let selectedCharacter = 'hank';    // default character
 
 document.addEventListener('DOMContentLoaded', () => {
   /* ——— Character‑select handlers ——— */
@@ -21,20 +21,26 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ——— Menu glue ——— */
   const menu     = document.getElementById('menu');
   const startBtn = document.getElementById('startGame');
-
   const playerImage = new Image();
 
   if (startBtn) {
     startBtn.addEventListener('click', () => {
-      menu.style.display = 'none';
-      playerImage.src    = selectedCharacter + '.png';
-      gameRunning        = true;
-      lastTime           = performance.now();  // reset timer
+      menu.style.display    = 'none';
+      playerImage.src       = selectedCharacter + '.png';
+      gameRunning           = true;
+      lastTime              = performance.now();  // reset timer
     });
   } else {
-    gameRunning = true;                 // no menu present
-    playerImage.src = selectedCharacter + '.png';
+    gameRunning       = true;                    // no menu present
+    playerImage.src   = selectedCharacter + '.png';
   }
+
+  /* ——— Pause on tab change ——— */
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && gameRunning) {
+      lastTime = performance.now();
+    }
+  });
 
   const canvas = document.getElementById('gameCanvas');
   const ctx    = canvas.getContext('2d');
@@ -155,6 +161,11 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastTime = performance.now();
   function loop(now) {
     if (!gameRunning) {
+      requestAnimationFrame(loop);
+      return;
+    }
+    if (document.hidden) {
+      lastTime = now;
       requestAnimationFrame(loop);
       return;
     }
