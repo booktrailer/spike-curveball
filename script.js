@@ -1,7 +1,7 @@
 // script.js
-let gameRunning = false;             // ← menu gate
-let selectedCharacter = 'hank';      // default character
-let highscore = parseInt(localStorage.getItem('dodgeCurveballHighscore') || '0', 10);
+
+let gameRunning = false;           // ← menu gate
+let selectedCharacter = 'hank';    // default character
 
 document.addEventListener('DOMContentLoaded', () => {
   /* ——— Character‑select handlers ——— */
@@ -19,14 +19,10 @@ document.addEventListener('DOMContentLoaded', () => {
     charH.classList.remove('selected');
   });
 
-  /* ——— Show stored highscore ——— */
-  const hsEl = document.getElementById('highscore');
-  if (hsEl) hsEl.innerText = highscore;
-
   /* ——— Menu glue ——— */
   const menu       = document.getElementById('menu');
   const startBtn   = document.getElementById('startGame');
-  const playerImage= new Image();
+  const playerImage = new Image();
 
   if (startBtn) {
     startBtn.addEventListener('click', () => {
@@ -51,20 +47,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const ctx    = canvas.getContext('2d');
   let cw, ch, diag;
 
+  // ——— Enemy setup ———
+  const enemyImage = new Image();
+  enemyImage.src   = 'enemy.png';
+  const enemySize  = 100;               // adjust as needed
+  const enemy      = {
+    x: 0,
+    y: enemySize/2 + 20,                // 20px down from top
+    speed: 250 * 0.6,                   // 3/5 of player speed
+    targetX: 0
+  };
+
   function resize() {
     cw   = canvas.width  = window.innerWidth;
     ch   = canvas.height = window.innerHeight;
     diag = Math.hypot(cw, ch);
+    enemy.x       = cw/2;               // recenter on width change
+    enemy.targetX = cw/2;
   }
   window.addEventListener('resize', resize);
   resize();
+
+  // every 2s, if enemy at target, pick new target in ±0.2·cw around player
+  setInterval(() => {
+    if (Math.abs(enemy.x - enemy.targetX) < 5) {
+      let newX = player.x + (Math.random()*2 - 1) * 0.2 * cw;
+      // clamp to screen
+      enemy.targetX = Math.min(Math.max(enemySize/2, newX), cw - enemySize/2);
+    }
+  }, 2000);
 
   // ——— Background image setup ———
   const bgImage = new Image();
   bgImage.src   = 'background.png';  // your 1:1 image
 
   // ——— Player setup ———
-  const spriteSize = 85;
+  const spriteSize = 125;
   const player = {
     x: cw/2,
     y: ch/2,
@@ -117,10 +135,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const spikeAngVel = Math.PI / 0.55;   // clockwise curve speed
   const speedFactor = 2.2;              // speed-up factor
 
-  // spawn a normal ball from top, at player.x ±0.2*cw
+  // spawn a normal ball from enemy position + random x‑offset ±0.2cw
   function spawnBall() {
-    const x = player.x + (Math.random()*2 - 1) * 0.2 * cw;
-    const y = 0;
+    const offset = (Math.random()*2 - 1) * 0.2 * cw;
+    const x = enemy.x;
+    const y = enemy.y + enemySize/2;
     const dx = player.x - x, dy = player.y - y;
     const mag = Math.hypot(dx, dy) || 1;
     const ux = dx / mag, uy = dy / mag;
@@ -140,7 +159,7 @@ document.addEventListener('DOMContentLoaded', () => {
     score++;
   }
 
-  // spawn spikes curving right
+  // spawn spikes curving right, ending at 24.5% of screen width
   function spawnSpikes(ax, ay, parentSpeed) {
     const travelDist = cw * 0.245;
     const spikeSpeed = parentSpeed * speedFactor;
@@ -179,6 +198,18 @@ document.addEventListener('DOMContentLoaded', () => {
     lastTime = now;
     totalElapsed += dt;
 
+    // enemy walks toward its targetX
+    const dxE = enemy.targetX - enemy.x;
+    if (Math.abs(dxE) > 1) {
+      const dir = dxE / Math.abs(dxE);
+      enemy.x += enemy.speed * dir * dt;
+      // clamp overshoot
+      if ((dir > 0 && enemy.x > enemy.targetX) ||
+          (dir < 0 && enemy.x < enemy.targetX)) {
+        enemy.x = enemy.targetX;
+      }
+    }
+
     // ramp difficulty
     if (totalElapsed >= nextHarderAt) {
       spawnInterval = Math.max(minInterval, spawnInterval * 0.9);
@@ -206,9 +237,9 @@ document.addEventListener('DOMContentLoaded', () => {
     for (let i = balls.length - 1; i >= 0; i--) {
       const b = balls[i];
       if (b.type === 'normal') {
-        // explode after traveling 65% screen height
+        // explode after traveling 40% screen width
         const traveled = Math.hypot(b.x - b.spawnX, b.y - b.spawnY);
-        if (traveled >= ch * 0.65) {
+        if (traveled >= ch * 0.4) {
           spawnSpikes(b.x, b.y, b.speed);
           balls.splice(i, 1);
           continue;
@@ -237,14 +268,6 @@ document.addEventListener('DOMContentLoaded', () => {
             dyp = b.y - player.y,
             r   = (b.type==='spike' ? ballRadius/3 : ballRadius) + player.radius;
       if (dxp*dxp + dyp*dyp < r*r) {
-        // check for new highscore before resetting
-        const finalScore = score;
-        if (finalScore > highscore) {
-          highscore = finalScore;
-          localStorage.setItem('dodgeCurveballHighscore', highscore);
-          document.getElementById('highscore').innerText = highscore;
-        }
-
         score = 0;
         spawnInterval = initialSpawnInterval;
         spawnTimer    = 0;
@@ -260,11 +283,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (bgImage.complete) {
       const iw = bgImage.naturalWidth,
             ih = bgImage.naturalHeight;
-      const scaledH = cw * (ih / iw);
-      const yOff = (ch - scaledH) / 2;
+      const scaledH = cw * (ih / iw),
+            yOff    = (ch - scaledH) / 2;
       ctx.drawImage(bgImage, -cw*0.1, yOff*1.2, cw*1.2, scaledH*1.2);
     } else {
       ctx.clearRect(0, 0, cw, ch);
+    }
+
+    // draw enemy
+    if (enemyImage.complete) {
+      ctx.drawImage(
+        enemyImage,
+        enemy.x - enemySize/2,
+        enemy.y - enemySize/2,
+        enemySize,
+        enemySize
+      );
     }
 
     // draw player
@@ -285,7 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // draw balls & spikes
     balls.forEach(b => {
-      const size = b.type==='spike' ? ballSize/3 : ballSize,
+      const size = (b.type==='spike' ? ballSize/3 : ballSize),
             half = size/2;
       if (ballImage.complete) {
         ctx.drawImage(ballImage, b.x - half, b.y - half, size, size);
