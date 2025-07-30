@@ -8,16 +8,25 @@ document.addEventListener('DOMContentLoaded', () => {
   /* ——— Character‑select handlers ——— */
   const charH = document.getElementById('characterHank');
   const charE = document.getElementById('characterEdgar');
+  const charF = document.getElementById('characterFang');
 
   charH.addEventListener('click', () => {
     selectedCharacter = 'hank';
     charH.classList.add('selected');
     charE.classList.remove('selected');
+    charF.classList.remove('selected');
   });
   charE.addEventListener('click', () => {
     selectedCharacter = 'edgar';
     charE.classList.add('selected');
     charH.classList.remove('selected');
+    charF.classList.remove('selected');
+  });
+  charF.addEventListener('click', () => {
+    selectedCharacter = 'fang';
+    charF.classList.add('selected');
+    charH.classList.remove('selected');
+    charE.classList.remove('selected');
   });
 
   /* ——— Menu glue ——— */
@@ -33,10 +42,12 @@ document.addEventListener('DOMContentLoaded', () => {
       playerImage.src     = selectedCharacter + '.png';
       gameRunning         = true;
       lastTime            = performance.now();  // reset timer
+      cubeSpawnTimer      = cubeSpawnInterval; // spawn first cube after interval
     });
   } else {
     gameRunning       = true;                  // no menu present
     playerImage.src   = selectedCharacter + '.png';
+    cubeSpawnTimer    = cubeSpawnInterval; // spawn first cube after interval
   }
 
   /* ——— Pause on tab change ——— */
@@ -111,8 +122,31 @@ document.addEventListener('DOMContentLoaded', () => {
   const ballSize   = Math.min(cw, ch) < 600 ? 55 : 70; // smaller on small screens
   const ballRadius = ballSize / 2;
 
-  // ——— Keyboard controls ———
+  // ——— Power Cube setup ———
+  const cubeImage = new Image();
+  cubeImage.src = 'powercube.png';
+  const cubeSize = Math.min(cw, ch) < 600 ? 40 : 50; // smaller on small screens
+  let powerCube = null;
+  let cubeSpawnTimer = 0;
+  const cubeSpawnInterval = 15000; // 15 seconds
+  
+  // Buff types
+  const buffTypes = [
+    { name: 'speed', color: '#00ff00', duration: 12000 },     // Green - Speed boost
+    { name: 'shrink', color: '#0080ff', duration: 15000 },    // Blue - Smaller size
+    { name: 'shield', color: '#ffff00', duration: 8000 },     // Yellow - Invulnerability  
+    { name: 'slowmo', color: '#8000ff', duration: 10000 },    // Purple - Slow projectiles
+    { name: 'double', color: '#ff0000', duration: 18000 },    // Red - Double points
+    { name: 'heal', color: '#ff69b4', duration: 0 }           // Pink - Instant heal (no duration)
+  ];
+  
+  // Active buffs
+  let activeBuffs = {};
+
+  // ——— Input controls ———
   const keys = { w: false, a: false, s: false, d: false };
+  let joystickVx = 0, joystickVy = 0;
+  let joystickActive = false;
   
   document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
@@ -130,22 +164,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   
-  function updateKeyboardInput() {
-    let vx = 0, vy = 0;
-    if (keys.a) vx -= 1; // left
-    if (keys.d) vx += 1; // right
-    if (keys.w) vy -= 1; // up
-    if (keys.s) vy += 1; // down
-    
-    // Normalize diagonal movement
-    if (vx !== 0 && vy !== 0) {
-      const length = Math.hypot(vx, vy);
-      vx /= length;
-      vy /= length;
+  function updateInput() {
+    // Use joystick if active, otherwise use keyboard
+    if (joystickActive) {
+      player.targetVx = joystickVx;
+      player.targetVy = joystickVy;
+    } else {
+      let vx = 0, vy = 0;
+      if (keys.a) vx -= 1; // left
+      if (keys.d) vx += 1; // right
+      if (keys.w) vy -= 1; // up
+      if (keys.s) vy += 1; // down
+      
+      // Normalize diagonal movement
+      if (vx !== 0 && vy !== 0) {
+        const length = Math.hypot(vx, vy);
+        vx /= length;
+        vy /= length;
+      }
+      
+      player.targetVx = vx;
+      player.targetVy = vy;
     }
-    
-    player.targetVx = vx;
-    player.targetVy = vy;
   }
 
   // ——— Joystick ———
@@ -161,11 +201,14 @@ document.addEventListener('DOMContentLoaded', () => {
     size: 200
   })
   .on('move', (_e, d) => {
-    player.targetVx = d.vector?.x  || 0;
-    player.targetVy = d.vector?.y ? -d.vector.y : 0;
+    joystickActive = true;
+    joystickVx = d.vector?.x  || 0;
+    joystickVy = d.vector?.y ? -d.vector.y : 0;
   })
   .on('end', () => {
-    player.targetVx = player.targetVy = 0;
+    joystickActive = false;
+    joystickVx = 0;
+    joystickVy = 0;
   });
 
   // ——— Ball & Spike logic ———
@@ -191,6 +234,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const spikeAngVel = Math.PI / 0.55;   // clockwise curve speed
   const speedFactor = 2.2;              // speed-up factor
 
+  // spawn power cube in lower half of screen
+  function spawnPowerCube() {
+    const x = cubeSize/2 + Math.random() * (cw - cubeSize); // random X within screen bounds
+    const y = ch * 0.5 + Math.random() * (ch * 0.5 - cubeSize); // Y between 50%-100% screen height
+    const buffType = buffTypes[Math.floor(Math.random() * buffTypes.length)];
+    
+    powerCube = {
+      x: x,
+      y: y,
+      startX: x,
+      startY: y,
+      rotation: 0,
+      pulse: 0,
+      buffType: buffType,
+      isJumping: false,
+      jumpProgress: 0,
+      scale: 1.0
+    };
+  }
+
   // spawn a normal ball from enemy position + random x‑offset ±0.2cw
   function spawnBall() {
     const offset = (Math.random()*2 - 1) * 0.2 * cw;
@@ -215,17 +278,18 @@ document.addEventListener('DOMContentLoaded', () => {
       particleTimer: 0 // timer for spawning particles
     });
 
-    // —— update score & highscore only
-    score++;
+    // —— update score & highscore (back to ball-dodging based)
+    const scoreGain = activeBuffs.double ? 2 : 1; // double points buff
+    score += scoreGain;
     
     // Add floating score text
     floatingTexts.push({
       x: enemy.x + (Math.random() - 0.5) * 100,
       y: enemy.y,
-      text: '+1',
+      text: `+${scoreGain}`,
       life: 1.0,
       vy: -60,
-      color: '#00ff00'
+      color: activeBuffs.double ? '#ff0000' : '#00ff00' // red for double points
     });
     
     if (score > highscore) {
@@ -254,7 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // spawn spikes curving right, ending at 24.5% of screen width
   function spawnSpikes(ax, ay, parentSpeed) {
     createExplosion(ax, ay, 6);
-    const travelDist = cw * 0.245;
+    const travelDist = cw * 0.267;
     const spikeSpeed = parentSpeed * speedFactor;
     for (let i = 0; i < spikeCount; i++) {
       const angle = i * (2 * Math.PI / spikeCount);
@@ -293,8 +357,8 @@ document.addEventListener('DOMContentLoaded', () => {
     lastTime = now;
     totalElapsed += dt;
 
-    // Update keyboard input
-    updateKeyboardInput();
+    // Update input (keyboard or joystick)
+    updateInput();
 
     // enemy walks toward its targetX
     const dxE = enemy.targetX - enemy.x;
@@ -326,18 +390,24 @@ document.addEventListener('DOMContentLoaded', () => {
     player.vx += (player.targetVx - player.vx) * easing * dt;
     player.vy += (player.targetVy - player.vy) * easing * dt;
     
-    // scale effect when moving
-    const targetScale = Math.hypot(player.vx, player.vy) > 0.1 ? 1.1 : 1.0;
+    // scale effect when moving (modified by shrink buff)
+    let baseScale = activeBuffs.shrink ? 0.7 : 1.0; // shrink buff effect
+    const targetScale = Math.hypot(player.vx, player.vy) > 0.1 ? baseScale * 1.1 : baseScale;
     player.scale += (targetScale - player.scale) * 5.0 * dt;
 
+    // calculate movement speed (modified by speed buff)
+    let currentSpeed = player.speed;
+    if (activeBuffs.speed) currentSpeed *= 1.5; // speed buff effect
+
     // update player position
+    const effectiveRadius = player.radius * (activeBuffs.shrink ? 0.7 : 1.0); // shrink hitbox
     player.x = Math.min(
-      Math.max(player.radius, player.x + player.vx * player.speed * dt),
-      cw - player.radius
+      Math.max(effectiveRadius, player.x + player.vx * currentSpeed * dt),
+      cw - effectiveRadius
     );
     player.y = Math.min(
-      Math.max(player.radius, player.y + player.vy * player.speed * dt),
-      ch - player.radius
+      Math.max(effectiveRadius, player.y + player.vy * currentSpeed * dt),
+      ch - effectiveRadius
     );
 
     // update player invulnerability
@@ -345,6 +415,56 @@ document.addEventListener('DOMContentLoaded', () => {
       player.invulnerableTime -= dt;
       if (player.invulnerableTime <= 0) {
         player.invulnerable = false;
+      }
+    }
+
+    // spawn speed trail particles when speed buff is active
+    if (activeBuffs.speed && Math.hypot(player.vx, player.vy) > 0.1) {
+      for (let i = 0; i < 3; i++) {
+        particles.push({
+          x: player.x + (Math.random() - 0.5) * player.radius,
+          y: player.y + (Math.random() - 0.5) * player.radius,
+          vx: -player.vx * 20 + (Math.random() - 0.5) * 30,
+          vy: -player.vy * 20 + (Math.random() - 0.5) * 30,
+          life: 1.0,
+          maxLife: 0.4,
+          size: 2 + Math.random() * 3,
+          color: '#00ff00'
+        });
+      }
+    }
+
+    // spawn shrink sparkle particles when shrink buff is active
+    if (activeBuffs.shrink) {
+      if (Math.random() < 0.3) { // 30% chance per frame
+        particles.push({
+          x: player.x + (Math.random() - 0.5) * player.radius * 2,
+          y: player.y + (Math.random() - 0.5) * player.radius * 2,
+          vx: (Math.random() - 0.5) * 50,
+          vy: (Math.random() - 0.5) * 50,
+          life: 1.0,
+          maxLife: 0.8,
+          size: 1 + Math.random() * 2,
+          color: '#0080ff'
+        });
+      }
+    }
+
+    // spawn red coin particles when double points buff is active
+    if (activeBuffs.double) {
+      if (Math.random() < 0.2) { // 20% chance per frame
+        const angle = Math.random() * Math.PI * 2;
+        const distance = player.radius + 20;
+        particles.push({
+          x: player.x + Math.cos(angle) * distance,
+          y: player.y + Math.sin(angle) * distance,
+          vx: Math.cos(angle) * 30,
+          vy: Math.sin(angle) * 30 - 20, // slight upward bias
+          life: 1.0,
+          maxLife: 1.2,
+          size: 3 + Math.random() * 2,
+          color: '#ff0000' // red color to match buff
+        });
       }
     }
 
@@ -359,8 +479,10 @@ document.addEventListener('DOMContentLoaded', () => {
           balls.splice(i, 1);
           continue;
         }
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
+        // apply slowmo buff to ball movement
+        const moveSpeed = activeBuffs.slowmo ? 0.5 : 1.0;
+        b.x += b.vx * dt * moveSpeed;
+        b.y += b.vy * dt * moveSpeed;
         b.rotation += 3 * dt; // rotate normal balls
         
         // Spawn particles behind the ball
@@ -388,8 +510,9 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       } else {
-        // rotate for rightward curvature
-        const θ = b.angVel * dt,
+        // rotate for rightward curvature (affected by slowmo)
+        const curveSpeed = activeBuffs.slowmo ? 0.5 : 1.0;
+        const θ = b.angVel * dt * curveSpeed,
               c = Math.cos(θ), s = Math.sin(θ);
         const nx = b.vx * c - b.vy * s,
               ny = b.vx * s + b.vy * c;
@@ -409,8 +532,10 @@ document.addEventListener('DOMContentLoaded', () => {
           balls.splice(i, 1);
           continue;
         }
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
+        // apply slowmo buff to spike movement  
+        const spikeSpeed = activeBuffs.slowmo ? 0.5 : 1.0;
+        b.x += b.vx * dt * spikeSpeed;
+        b.y += b.vy * dt * spikeSpeed;
         b.rotation += 5 * dt; // rotate spikes faster
         
         // Add current position to trail
@@ -430,11 +555,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // collision (only if not invulnerable)
+      // collision (only if not invulnerable and no shield buff)
       const dxp = b.x - player.x,
             dyp = b.y - player.y,
-            r   = (b.type==='spike' ? ballRadius/3 : ballRadius) + player.radius;
-      if (!player.invulnerable && dxp*dxp + dyp*dyp < r*r) {
+            r   = (b.type==='spike' ? ballRadius/3 : ballRadius) + effectiveRadius;
+      if (!player.invulnerable && !activeBuffs.shield && dxp*dxp + dyp*dyp < r*r) {
         // Screen shake on collision
         shakeIntensity = 10;
         createExplosion(player.x, player.y, 8);
@@ -464,6 +589,13 @@ document.addEventListener('DOMContentLoaded', () => {
           totalElapsed  = 0;
           nextHarderAt  = 5;
           playerHP = maxHP; // reset HP for next game
+          
+          // Clear all active buffs on death
+          activeBuffs = {};
+          
+          // Reset cube spawn timer
+          cubeSpawnTimer = cubeSpawnInterval;
+          powerCube = null;
           
           // Start fade transition
           gameOverFade = 1.0;
@@ -525,6 +657,93 @@ document.addEventListener('DOMContentLoaded', () => {
       if (heartPulseTime < 0) heartPulseTime = 0;
     }
 
+    // update cube spawn timer
+    cubeSpawnTimer -= dt * 1000;
+    if (cubeSpawnTimer <= 0 && !powerCube) {
+      spawnPowerCube();
+      cubeSpawnTimer = cubeSpawnInterval;
+    }
+
+    // update power cube
+    if (powerCube) {
+      powerCube.rotation += 2 * dt; // rotate cube
+      powerCube.pulse += dt * 4; // pulse animation
+      
+      const dx = powerCube.x - player.x;
+      const dy = powerCube.y - player.y;
+      const distance = Math.hypot(dx, dy);
+      const attractRadius = player.radius + 80; // attraction range
+      const collectRadius = player.radius + 20; // collection range
+      
+      if (!powerCube.isJumping && distance < attractRadius) {
+        // Start jumping toward player
+        powerCube.isJumping = true;
+        powerCube.jumpProgress = 0;
+      }
+      
+      if (powerCube.isJumping) {
+        powerCube.jumpProgress += dt * 3; // jump speed
+        
+        if (powerCube.jumpProgress >= 1) {
+          // Collection complete - activate buff
+          if (powerCube.buffType.name === 'heal') {
+            // Instant heal effect
+            if (playerHP < maxHP) {
+              playerHP++;
+              heartPulseTime = 1.0; // pulse hearts
+            }
+            
+            // Add heal text
+            floatingTexts.push({
+              x: player.x,
+              y: player.y - 50,
+              text: '+1 HP',
+              life: 1.0,
+              vy: -60,
+              color: powerCube.buffType.color
+            });
+          } else {
+            // Regular timed buff
+            activeBuffs[powerCube.buffType.name] = {
+              timeLeft: powerCube.buffType.duration,
+              color: powerCube.buffType.color
+            };
+            
+            // Add buff text
+            floatingTexts.push({
+              x: player.x,
+              y: player.y - 50,
+              text: powerCube.buffType.name.toUpperCase(),
+              life: 1.0,
+              vy: -60,
+              color: powerCube.buffType.color
+            });
+          }
+          
+          // Collection particles
+          createExplosion(player.x, player.y, 8);
+          
+          powerCube = null; // remove cube
+        } else {
+          // Animate jump toward player with arc
+          const t = powerCube.jumpProgress;
+          const easeT = 1 - Math.pow(1 - t, 3); // ease out cubic
+          
+          powerCube.x = powerCube.startX + (player.x - powerCube.startX) * easeT;
+          powerCube.y = powerCube.startY + (player.y - powerCube.startY) * easeT - Math.sin(t * Math.PI) * 30;
+          powerCube.scale = 1 + Math.sin(t * Math.PI) * 0.3; // scale during jump
+        }
+      }
+    }
+
+    // update active buffs
+    Object.keys(activeBuffs).forEach(buffName => {
+      activeBuffs[buffName].timeLeft -= dt * 1000;
+      if (activeBuffs[buffName].timeLeft <= 0) {
+        delete activeBuffs[buffName];
+      }
+    });
+
     // update ground marks
     for (let i = groundMarks.length - 1; i >= 0; i--) {
       const mark = groundMarks[i];
@@ -565,6 +784,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // draw player with scale effect and invulnerability flashing
     ctx.save();
+    
+    // Shield buff visual effect with rotating rings
+    if (activeBuffs.shield) {
+      const time = performance.now() / 1000;
+      const shieldPulse = Math.sin(time * 8) * 0.1;
+      
+      // Outer glow
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = '#ffff00';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius * (2.2 + shieldPulse), 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Rotating energy rings
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 3;
+      
+      for (let ring = 0; ring < 3; ring++) {
+        const ringRadius = player.radius * (1.3 + ring * 0.3 + shieldPulse);
+        const rotation = time * (2 + ring * 0.5);
+        
+        ctx.beginPath();
+        for (let i = 0; i < 8; i++) {
+          const angle = (i / 8) * Math.PI * 2 + rotation;
+          const x = player.x + Math.cos(angle) * ringRadius;
+          const y = player.y + Math.sin(angle) * ringRadius;
+          
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+      
+      ctx.globalAlpha = 1.0;
+    }
+    
+    // Double points red aura
+    if (activeBuffs.double) {
+      const redPulse = Math.sin(performance.now() * 6 * Math.PI / 1000);
+      ctx.globalAlpha = 0.3 + redPulse * 0.1;
+      ctx.fillStyle = '#ff0000';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius * (1.8 + redPulse * 0.2), 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    }
     
     // Flash effect when invulnerable
     if (player.invulnerable) {
@@ -650,6 +917,43 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.restore();
     });
 
+    // draw power cube
+    if (powerCube) {
+      ctx.save();
+      ctx.translate(powerCube.x, powerCube.y);
+      ctx.rotate(powerCube.rotation);
+      ctx.scale(powerCube.scale, powerCube.scale);
+      
+      // Pulsing glow effect with buff color
+      const glowScale = 1 + Math.sin(powerCube.pulse) * 0.15;
+      const glowSize = cubeSize * glowScale;
+      const buffColor = powerCube.buffType.color;
+      
+      // Outer glow
+      ctx.globalAlpha = 0.4;
+      ctx.fillStyle = buffColor;
+      ctx.beginPath();
+      ctx.arc(0, 0, glowSize * 0.9, 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Draw cube
+      ctx.globalAlpha = 1.0;
+      if (cubeImage.complete) {
+        // Tint the cube image with buff color
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillStyle = buffColor;
+        ctx.fillRect(-cubeSize/2, -cubeSize/2, cubeSize, cubeSize);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.drawImage(cubeImage, -cubeSize/2, -cubeSize/2, cubeSize, cubeSize);
+      } else {
+        // Fallback colored square
+        ctx.fillStyle = buffColor;
+        ctx.fillRect(-cubeSize/2, -cubeSize/2, cubeSize, cubeSize);
+      }
+      
+      ctx.restore();
+    }
+
     // draw ground marks as white X shapes (like bandaids)
     groundMarks.forEach(mark => {
       const alpha = mark.life * 0.8; // semi-transparent
@@ -688,6 +992,24 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.textBaseline = 'middle';
       ctx.fillText(t.text, t.x, t.y);
       ctx.restore();
+    });
+
+    // draw active buff indicators
+    const buffNames = Object.keys(activeBuffs);
+    let buffY = 15;
+    buffNames.forEach(buffName => {
+      const buff = activeBuffs[buffName];
+      const timeLeft = Math.ceil(buff.timeLeft / 1000);
+      
+      ctx.save();
+      ctx.fillStyle = buff.color;
+      ctx.font = 'bold 16px Arial, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`${buffName.toUpperCase()}: ${timeLeft}s`, cw - 15, buffY);
+      ctx.restore();
+      
+      buffY += 25;
     });
 
     // draw score with enhanced styling (scaled for screen size)
@@ -758,6 +1080,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // restore canvas transform
     ctx.restore();
+
+    // draw slowmo screen tint
+    if (activeBuffs.slowmo) {
+      ctx.fillStyle = 'rgba(128, 0, 255, 0.1)'; // purple tint
+      ctx.fillRect(0, 0, cw, ch);
+      
+      // Add scan lines effect
+      ctx.strokeStyle = 'rgba(128, 0, 255, 0.2)';
+      ctx.lineWidth = 1;
+      for (let y = 0; y < ch; y += 4) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(cw, y);
+        ctx.stroke();
+      }
+    }
 
     // draw game over fade
     if (gameOverFade > 0) {
