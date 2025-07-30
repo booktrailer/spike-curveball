@@ -111,6 +111,43 @@ document.addEventListener('DOMContentLoaded', () => {
   const ballSize   = Math.min(cw, ch) < 600 ? 55 : 70; // smaller on small screens
   const ballRadius = ballSize / 2;
 
+  // ——— Keyboard controls ———
+  const keys = { w: false, a: false, s: false, d: false };
+  
+  document.addEventListener('keydown', (e) => {
+    const key = e.key.toLowerCase();
+    if (key in keys) {
+      keys[key] = true;
+      e.preventDefault();
+    }
+  });
+  
+  document.addEventListener('keyup', (e) => {
+    const key = e.key.toLowerCase();
+    if (key in keys) {
+      keys[key] = false;
+      e.preventDefault();
+    }
+  });
+  
+  function updateKeyboardInput() {
+    let vx = 0, vy = 0;
+    if (keys.a) vx -= 1; // left
+    if (keys.d) vx += 1; // right
+    if (keys.w) vy -= 1; // up
+    if (keys.s) vy += 1; // down
+    
+    // Normalize diagonal movement
+    if (vx !== 0 && vy !== 0) {
+      const length = Math.hypot(vx, vy);
+      vx /= length;
+      vy /= length;
+    }
+    
+    player.targetVx = vx;
+    player.targetVy = vy;
+  }
+
   // ——— Joystick ———
   if (typeof nipplejs === 'undefined') {
     console.error('NippleJS not loaded');
@@ -255,6 +292,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const dt = (now - lastTime) / 1000;
     lastTime = now;
     totalElapsed += dt;
+
+    // Update keyboard input
+    updateKeyboardInput();
 
     // enemy walks toward its targetX
     const dxE = enemy.targetX - enemy.x;
