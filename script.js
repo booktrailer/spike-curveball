@@ -132,24 +132,83 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Buff types
   const buffTypes = [
-    { name: 'speed', color: '#00ff00', duration: 12000 },     // Green - Speed boost
-    { name: 'shrink', color: '#0080ff', duration: 15000 },    // Blue - Smaller size
-    { name: 'shield', color: '#ffff00', duration: 8000 },     // Yellow - Invulnerability  
-    { name: 'slowmo', color: '#8000ff', duration: 10000 },    // Purple - Slow projectiles
-    { name: 'double', color: '#ff0000', duration: 18000 },    // Red - Double points
+    { name: 'speed', color: '#00ff00', duration: 8000 },      // Green - Speed boost
+    { name: 'shrink', color: '#0080ff', duration: 10000 },    // Blue - Smaller size
+    { name: 'shield', color: '#ffff00', duration: 3000 },     // Yellow - Invulnerability  
+    { name: 'slowmo', color: '#8000ff', duration: 6000 },     // Purple - Slow projectiles
+    { name: 'double', color: '#ff0000', duration: 12000 },    // Red - Double points
     { name: 'heal', color: '#ff69b4', duration: 0 }           // Pink - Instant heal (no duration)
   ];
   
   // Active buffs
   let activeBuffs = {};
+  
+  // ——— Ability System ———
+  let abilityChargeTime = 0;
+  let abilityReady = false;
+  let abilityActive = false;
+  let enemyDizzyTime = 0;
+  let isEnemyDizzy = false;
+  let dizzyPointTimer = 0;
+  
+  const ABILITY_CHARGE_DURATION = 10000; // 10 seconds
+  const ENEMY_DIZZY_DURATION = 5000; // 5 seconds
+  const DIZZY_POINT_INTERVAL = 1500; // Give points every 1.5 seconds during dizzy
+  
+  // Edgar's jump ability
+  let edgarJumping = false;
+  let edgarJumpTime = 0;
+  let edgarJumpStartX = 0;
+  let edgarJumpStartY = 0;
+  let edgarJumpTargetX = 0;
+  let edgarJumpTargetY = 0;
+  const EDGAR_JUMP_DURATION = 1200; // 1.2 seconds
+  const EDGAR_JUMP_DISTANCE = 300;
+  
+  // Hank's bubble ability
+  let hankBubble = null;
+  const HANK_BUBBLE_DURATION = 3000; // 3 seconds
+  const HANK_BUBBLE_SIZE = 240; // Even bigger bubble
+  
+  // Fang's chain attack ability
+  let fangChaining = false;
+  let fangChainTargets = [];
+  let fangCurrentTarget = 0;
+  let fangDashTime = 0;
+  let fangStartX = 0;
+  let fangStartY = 0;
+  let fangTargetX = 0;
+  let fangTargetY = 0;
+  let frozenSpikes = [];
+  const FANG_DASH_SPEED = 800; // pixels per second
+  const FANG_FREEZE_DURATION = 5000; // 5 seconds
+  
+  // Character abilities
+  const abilities = {
+    hank: {
+      name: 'Bubble Shield',
+      execute: executeHankAbility,
+      chargeTime: 10000 // 10 seconds
+    },
+    edgar: {
+      name: 'Jump Dash',
+      execute: executeEdgarAbility,
+      chargeTime: 10000 // 10 seconds
+    },
+    fang: {
+      name: 'Chain Strike',
+      execute: executeFangAbility,
+      chargeTime: 20000 // 20 seconds
+    }
+  };
 
   // ——— Input controls ———
-  const keys = { w: false, a: false, s: false, d: false };
+  const keys = { w: false, a: false, s: false, d: false, space: false };
   let joystickVx = 0, joystickVy = 0;
   let joystickActive = false;
   
   document.addEventListener('keydown', (e) => {
-    const key = e.key.toLowerCase();
+    const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
     if (key in keys) {
       keys[key] = true;
       e.preventDefault();
@@ -157,7 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   
   document.addEventListener('keyup', (e) => {
-    const key = e.key.toLowerCase();
+    const key = e.key === ' ' ? 'space' : e.key.toLowerCase();
     if (key in keys) {
       keys[key] = false;
       e.preventDefault();
@@ -298,6 +357,448 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // \u2014\u2014\u2014 Ability System Functions \u2014\u2014\u2014
+  function updateAbilitySystem(dt) {
+    // Get current character's charge time
+    const currentAbility = abilities[selectedCharacter];
+    const chargeTime = currentAbility ? currentAbility.chargeTime : ABILITY_CHARGE_DURATION;
+    
+    // Update ability charge
+    if (!abilityReady) {
+      abilityChargeTime += dt * 1000;
+      if (abilityChargeTime >= chargeTime) {
+        abilityReady = true;
+        abilityChargeTime = chargeTime;
+      }
+    }
+    
+    // Handle ability activation
+    if (keys.space && abilityReady && !abilityActive) {
+      activateAbility();
+    }
+    
+    // Update enemy dizzy state
+    if (isEnemyDizzy) {
+      enemyDizzyTime -= dt * 1000;
+      
+      // Give Fang points during dizzy state
+      if (selectedCharacter === 'fang') {
+        dizzyPointTimer += dt * 1000;
+        if (dizzyPointTimer >= DIZZY_POINT_INTERVAL) {
+          dizzyPointTimer = 0;
+          
+          // Award points
+          const scoreGain = activeBuffs.double ? 2 : 1; // double points buff applies
+          score += scoreGain;
+          
+          // Add floating score text near enemy
+          floatingTexts.push({
+            x: enemy.x + (Math.random() - 0.5) * 60,
+            y: enemy.y - 30 + (Math.random() - 0.5) * 20,
+            text: `+${scoreGain}`,
+            life: 1.0,
+            vy: -40,
+            color: activeBuffs.double ? '#ff0000' : '#ffff00' // yellow for dizzy points, red for double
+          });
+          
+          if (score > highscore) {
+            highscore = score;
+            highscoreEl.textContent = highscore;
+          }
+        }
+      }
+      
+      if (enemyDizzyTime <= 0) {
+        isEnemyDizzy = false;
+        abilityActive = false;
+        abilityReady = false;
+        abilityChargeTime = 0;
+        dizzyPointTimer = 0; // Reset dizzy point timer
+        
+        // Remove Fang's immunity when enemy recovers
+        if (selectedCharacter === 'fang') {
+          player.invulnerable = false;
+          player.invulnerableTime = 0;
+        }
+      }
+    }
+  }
+  
+  function activateAbility() {
+    const ability = abilities[selectedCharacter];
+    if (ability && ability.execute) {
+      abilityActive = true;
+      ability.execute();
+      
+      // Only Fang makes enemy dizzy
+      if (selectedCharacter === 'fang') {
+        // Start enemy dizzy state after ability
+        setTimeout(() => {
+          isEnemyDizzy = true;
+          enemyDizzyTime = ENEMY_DIZZY_DURATION;
+          dizzyPointTimer = 0; // Reset point timer when dizzy starts
+        }, 1000); // Small delay before dizzy starts
+      } else {
+        // For other characters, just reset ability after a short delay
+        setTimeout(() => {
+          abilityActive = false;
+          abilityReady = false;
+          abilityChargeTime = 0;
+        }, 1500);
+      }
+    }
+  }
+  
+  function executeHankAbility() {
+    // Calculate bubble direction towards enemy
+    let bubbleDx = enemy.x - player.x;
+    let bubbleDy = enemy.y - player.y;
+    
+    // Normalize direction
+    const magnitude = Math.hypot(bubbleDx, bubbleDy) || 1;
+    bubbleDx /= magnitude;
+    bubbleDy /= magnitude;
+    
+    // Create bubble in front of player, aimed at enemy
+    const bubbleDistance = player.radius + HANK_BUBBLE_SIZE/2 + 20;
+    hankBubble = {
+      x: player.x + bubbleDx * bubbleDistance,
+      y: player.y + bubbleDy * bubbleDistance,
+      vx: bubbleDx * 150, // bubble moves towards enemy
+      vy: bubbleDy * 150,
+      size: HANK_BUBBLE_SIZE,
+      life: HANK_BUBBLE_DURATION,
+      pulse: 0,
+      spikesAbsorbed: 0
+    };
+    
+    // Visual effect
+    createExplosion(hankBubble.x, hankBubble.y, 10);
+  }
+  
+  function executeEdgarAbility() {
+    // Calculate jump direction based on current movement or default forward
+    let jumpDx = player.vx || 0;
+    let jumpDy = player.vy || 0;
+    
+    // If not moving, jump in the direction of current target velocity
+    if (jumpDx === 0 && jumpDy === 0) {
+      jumpDx = player.targetVx || 1; // default right
+      jumpDy = player.targetVy || 0;
+    }
+    
+    // Normalize direction
+    const magnitude = Math.hypot(jumpDx, jumpDy) || 1;
+    jumpDx /= magnitude;
+    jumpDy /= magnitude;
+    
+    // Set jump parameters
+    edgarJumping = true;
+    edgarJumpTime = 0;
+    edgarJumpStartX = player.x;
+    edgarJumpStartY = player.y;
+    edgarJumpTargetX = player.x + jumpDx * EDGAR_JUMP_DISTANCE;
+    edgarJumpTargetY = player.y + jumpDy * EDGAR_JUMP_DISTANCE;
+    
+    // Clamp target to screen bounds
+    const effectiveRadius = player.radius * (activeBuffs.shrink ? 0.7 : 1.0);
+    edgarJumpTargetX = Math.min(Math.max(effectiveRadius, edgarJumpTargetX), cw - effectiveRadius);
+    edgarJumpTargetY = Math.min(Math.max(effectiveRadius, edgarJumpTargetY), ch - effectiveRadius);
+    
+    // Give immunity during jump
+    player.invulnerable = true;
+    player.invulnerableTime = EDGAR_JUMP_DURATION / 1000;
+    
+    // Visual effect
+    createExplosion(player.x, player.y, 12);
+  }
+  
+  function executeFangAbility() {
+    // Find all spikes on screen
+    const spikes = balls.filter(ball => ball.type === 'spike');
+    
+    if (spikes.length === 0) {
+      // No spikes to chain to, just dash toward enemy
+      fangChainTargets = [{ x: enemy.x, y: enemy.y, isEnemy: true }];
+    } else {
+      // Find closest spike
+      let closestSpike = null;
+      let closestDistance = Infinity;
+      
+      spikes.forEach(spike => {
+        const distance = Math.hypot(spike.x - player.x, spike.y - player.y);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestSpike = spike;
+        }
+      });
+      
+      // Build chain targets: all spikes then enemy
+      fangChainTargets = [...spikes.map(spike => ({ x: spike.x, y: spike.y, spike: spike })), 
+                         { x: enemy.x, y: enemy.y, isEnemy: true }];
+      
+      // Sort by distance to create optimal chaining path
+      fangChainTargets.sort((a, b) => {
+        const distA = Math.hypot(a.x - player.x, a.y - player.y);
+        const distB = Math.hypot(b.x - player.x, b.y - player.y);
+        return distA - distB;
+      });
+    }
+    
+    // Start chaining
+    fangChaining = true;
+    fangCurrentTarget = 0;
+    fangDashTime = 0;
+    
+    // Give immunity during chain (will be extended after enemy dizzy ends)
+    player.invulnerable = true;
+    player.invulnerableTime = 10; // Initial immunity during chain
+    
+    // Start first dash
+    startFangDash();
+    
+    // Visual effect
+    createExplosion(player.x, player.y, 15);
+  }
+  
+  function updateEdgarJump(dt) {
+    if (!edgarJumping) return;
+    
+    edgarJumpTime += dt * 1000;
+    const progress = Math.min(edgarJumpTime / EDGAR_JUMP_DURATION, 1);
+    
+    if (progress >= 1) {
+      // Jump complete
+      edgarJumping = false;
+      player.x = edgarJumpTargetX;
+      player.y = edgarJumpTargetY;
+      
+      // Landing particles
+      createExplosion(player.x, player.y, 8);
+      return;
+    }
+    
+    // Smooth arc interpolation
+    const easeProgress = 1 - Math.pow(1 - progress, 3); // ease out cubic
+    const arcHeight = 80 * Math.sin(progress * Math.PI); // parabolic arc
+    
+    player.x = edgarJumpStartX + (edgarJumpTargetX - edgarJumpStartX) * easeProgress;
+    player.y = edgarJumpStartY + (edgarJumpTargetY - edgarJumpStartY) * easeProgress - arcHeight;
+    
+    // Jump trail particles
+    if (Math.random() < 0.3) {
+      particles.push({
+        x: player.x + (Math.random() - 0.5) * player.radius,
+        y: player.y + (Math.random() - 0.5) * player.radius,
+        vx: (Math.random() - 0.5) * 100,
+        vy: (Math.random() - 0.5) * 100 + 50, // slight downward bias
+        life: 1.0,
+        maxLife: 0.8,
+        size: 2 + Math.random() * 3,
+        color: '#00ffff' // cyan trail
+      });
+    }
+  }
+  
+  function updateHankBubble(dt) {
+    if (!hankBubble) return;
+    
+    // Update bubble position
+    hankBubble.x += hankBubble.vx * dt;
+    hankBubble.y += hankBubble.vy * dt;
+    hankBubble.life -= dt * 1000;
+    hankBubble.pulse += dt * 6; // pulsing animation
+    
+    // Remove bubble if expired or off screen
+    if (hankBubble.life <= 0 || 
+        hankBubble.x < -hankBubble.size || hankBubble.x > cw + hankBubble.size ||
+        hankBubble.y < -hankBubble.size || hankBubble.y > ch + hankBubble.size) {
+      hankBubble = null;
+      return;
+    }
+    
+    // Safety check: ensure balls array exists and has valid length
+    if (!balls || balls.length === 0) return;
+    
+    // Check collision with spikes - use safer iteration
+    const ballsToRemove = [];
+    for (let i = 0; i < balls.length; i++) {
+      const ball = balls[i];
+      if (!ball) continue; // Safety check
+      
+      const dx = ball.x - hankBubble.x;
+      const dy = ball.y - hankBubble.y;
+      const distance = Math.hypot(dx, dy);
+      const collisionRadius = hankBubble.size/2 + (ball.type === 'spike' ? ballRadius/3 : ballRadius);
+      
+      if (distance < collisionRadius) {
+        // Mark ball for removal instead of removing immediately
+        ballsToRemove.push(i);
+        
+        // Absorb the spike/ball
+        hankBubble.spikesAbsorbed++;
+        
+        // Pop particles at absorption point
+        for (let p = 0; p < 5; p++) {
+          particles.push({
+            x: ball.x,
+            y: ball.y,
+            vx: (Math.random() - 0.5) * 150,
+            vy: (Math.random() - 0.5) * 150,
+            life: 1.0,
+            maxLife: 0.6,
+            size: 3,
+            color: '#00ffff' // cyan absorption particles
+          });
+        }
+        
+        // Bubble gets slightly smaller after absorbing spikes
+        hankBubble.size *= 0.95;
+        
+        // Remove bubble if it absorbed too many spikes
+        if (hankBubble.spikesAbsorbed >= 8) {
+          createExplosion(hankBubble.x, hankBubble.y, 15);
+          hankBubble = null;
+          break; // Exit early if bubble is destroyed
+        }
+      }
+    }
+    
+    // Remove absorbed balls in reverse order to maintain indices
+    for (let i = ballsToRemove.length - 1; i >= 0; i--) {
+      const index = ballsToRemove[i];
+      if (index >= 0 && index < balls.length) {
+        balls.splice(index, 1);
+      }
+    }
+  }
+  
+  function startFangDash() {
+    if (fangCurrentTarget >= fangChainTargets.length) {
+      // Chain complete
+      fangChaining = false;
+      return;
+    }
+    
+    const target = fangChainTargets[fangCurrentTarget];
+    fangStartX = player.x;
+    fangStartY = player.y;
+    fangTargetX = target.x;
+    fangTargetY = target.y;
+    fangDashTime = 0;
+  }
+  
+  function updateFangChain(dt) {
+    if (!fangChaining) {
+      // Update frozen spikes countdown with safety checks
+      if (frozenSpikes && frozenSpikes.length > 0) {
+        for (let i = frozenSpikes.length - 1; i >= 0; i--) {
+          const frozenSpike = frozenSpikes[i];
+          if (!frozenSpike || !frozenSpike.spike) {
+            // Remove invalid frozen spike entries
+            frozenSpikes.splice(i, 1);
+            continue;
+          }
+          
+          frozenSpike.freezeTime -= dt * 1000;
+          if (frozenSpike.freezeTime <= 0) {
+            // Unfreeze spike
+            if (frozenSpike.spike && typeof frozenSpike.originalVx !== 'undefined') {
+              frozenSpike.spike.vx = frozenSpike.originalVx;
+              frozenSpike.spike.vy = frozenSpike.originalVy;
+              if (typeof frozenSpike.originalAngVel !== 'undefined') {
+                frozenSpike.spike.angVel = frozenSpike.originalAngVel;
+              }
+            }
+            frozenSpikes.splice(i, 1);
+          }
+        }
+      }
+      return;
+    }
+    
+    if (fangCurrentTarget >= fangChainTargets.length) {
+      fangChaining = false;
+      return;
+    }
+    
+    const target = fangChainTargets[fangCurrentTarget];
+    const dashDistance = Math.hypot(fangTargetX - fangStartX, fangTargetY - fangStartY);
+    const dashDuration = dashDistance / FANG_DASH_SPEED;
+    
+    fangDashTime += dt;
+    const progress = Math.min(fangDashTime / dashDuration, 1);
+    
+    if (progress >= 1) {
+      // Reached target
+      player.x = fangTargetX;
+      player.y = fangTargetY;
+      
+      if (target.spike) {
+        // Freeze this spike
+        frozenSpikes.push({
+          spike: target.spike,
+          freezeTime: FANG_FREEZE_DURATION,
+          originalVx: target.spike.vx,
+          originalVy: target.spike.vy,
+          originalAngVel: target.spike.angVel || 0
+        });
+        
+        // Stop spike movement
+        target.spike.vx = 0;
+        target.spike.vy = 0;
+        if (target.spike.angVel) target.spike.angVel = 0;
+        
+        // Visual effect
+        createExplosion(player.x, player.y, 8);
+        
+        // Lightning particles
+        for (let p = 0; p < 10; p++) {
+          particles.push({
+            x: player.x,
+            y: player.y,
+            vx: (Math.random() - 0.5) * 200,
+            vy: (Math.random() - 0.5) * 200,
+            life: 1.0,
+            maxLife: 0.4,
+            size: 2 + Math.random() * 3,
+            color: '#ffff00' // yellow lightning
+          });
+        }
+      } else if (target.isEnemy) {
+        // Reached enemy - big explosion
+        createExplosion(player.x, player.y, 20);
+      }
+      
+      // Move to next target
+      fangCurrentTarget++;
+      if (fangCurrentTarget < fangChainTargets.length) {
+        startFangDash();
+      } else {
+        fangChaining = false;
+      }
+    } else {
+      // Update dash position
+      const easeProgress = 1 - Math.pow(1 - progress, 2); // ease out quad
+      player.x = fangStartX + (fangTargetX - fangStartX) * easeProgress;
+      player.y = fangStartY + (fangTargetY - fangStartY) * easeProgress;
+      
+      // Dash trail particles
+      if (Math.random() < 0.5) {
+        particles.push({
+          x: player.x + (Math.random() - 0.5) * player.radius,
+          y: player.y + (Math.random() - 0.5) * player.radius,
+          vx: (Math.random() - 0.5) * 50,
+          vy: (Math.random() - 0.5) * 50,
+          life: 1.0,
+          maxLife: 0.6,
+          size: 3 + Math.random() * 2,
+          color: '#ffff00' // yellow dash trail
+        });
+      }
+    }
+  }
+
   // create explosion particles
   function createExplosion(x, y, count = 8) {
     for (let i = 0; i < count; i++) {
@@ -359,16 +860,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Update input (keyboard or joystick)
     updateInput();
+    
+    // Handle ability system
+    updateAbilitySystem(dt);
+    
+    // Update Edgar's jump ability
+    updateEdgarJump(dt);
+    
+    // Update Hank's bubble ability (before ball updates to avoid conflicts)
+    updateHankBubble(dt);
+    
+    // Update Fang's chain ability
+    updateFangChain(dt);
 
-    // enemy walks toward its targetX
-    const dxE = enemy.targetX - enemy.x;
-    if (Math.abs(dxE) > 1) {
-      const dir = dxE / Math.abs(dxE);
-      enemy.x += enemy.speed * dir * dt;
-      // clamp overshoot
-      if ((dir > 0 && enemy.x > enemy.targetX) ||
-          (dir < 0 && enemy.x < enemy.targetX)) {
-        enemy.x = enemy.targetX;
+    // enemy walks toward its targetX (unless dizzy)
+    if (!isEnemyDizzy) {
+      const dxE = enemy.targetX - enemy.x;
+      if (Math.abs(dxE) > 1) {
+        const dir = dxE / Math.abs(dxE);
+        enemy.x += enemy.speed * dir * dt;
+        // clamp overshoot
+        if ((dir > 0 && enemy.x > enemy.targetX) ||
+            (dir < 0 && enemy.x < enemy.targetX)) {
+          enemy.x = enemy.targetX;
+        }
       }
     }
 
@@ -378,11 +893,13 @@ document.addEventListener('DOMContentLoaded', () => {
       nextHarderAt += 5;
     }
 
-    // spawn timing
-    spawnTimer += dt * 1000;
-    while (spawnTimer >= spawnInterval) {
-      spawnTimer -= spawnInterval;
-      spawnBall();
+    // spawn timing (pause during enemy dizzy)
+    if (!isEnemyDizzy) {
+      spawnTimer += dt * 1000;
+      while (spawnTimer >= spawnInterval) {
+        spawnTimer -= spawnInterval;
+        spawnBall();
+      }
     }
 
     // smooth player movement with easing
@@ -399,16 +916,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSpeed = player.speed;
     if (activeBuffs.speed) currentSpeed *= 1.5; // speed buff effect
 
-    // update player position
-    const effectiveRadius = player.radius * (activeBuffs.shrink ? 0.7 : 1.0); // shrink hitbox
-    player.x = Math.min(
-      Math.max(effectiveRadius, player.x + player.vx * currentSpeed * dt),
-      cw - effectiveRadius
-    );
-    player.y = Math.min(
-      Math.max(effectiveRadius, player.y + player.vy * currentSpeed * dt),
-      ch - effectiveRadius
-    );
+    // update player position (unless Edgar is jumping or Fang is chaining)
+    if (!edgarJumping && !fangChaining) {
+      const effectiveRadius = player.radius * (activeBuffs.shrink ? 0.7 : 1.0); // shrink hitbox
+      player.x = Math.min(
+        Math.max(effectiveRadius, player.x + player.vx * currentSpeed * dt),
+        cw - effectiveRadius
+      );
+      player.y = Math.min(
+        Math.max(effectiveRadius, player.y + player.vy * currentSpeed * dt),
+        ch - effectiveRadius
+      );
+    }
 
     // update player invulnerability
     if (player.invulnerable) {
@@ -464,6 +983,24 @@ document.addEventListener('DOMContentLoaded', () => {
           maxLife: 1.2,
           size: 3 + Math.random() * 2,
           color: '#ff0000' // red color to match buff
+        });
+      }
+    }
+
+    // spawn dizzy particles around enemy when enemy is dizzy
+    if (isEnemyDizzy) {
+      if (Math.random() < 0.4) { // 40% chance per frame
+        const angle = Math.random() * Math.PI * 2;
+        const distance = enemySize/2 + 20 + Math.random() * 15;
+        particles.push({
+          x: enemy.x + Math.cos(angle) * distance,
+          y: enemy.y + Math.sin(angle) * distance - 25,
+          vx: Math.cos(angle) * 15,
+          vy: -25 - Math.random() * 15, // upward movement
+          life: 1.0,
+          maxLife: 1.2,
+          size: 3 + Math.random() * 2,
+          color: '#ff69b4' // pink dizzy stars
         });
       }
     }
@@ -556,6 +1093,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // collision (only if not invulnerable and no shield buff)
+      const effectiveRadius = player.radius * (activeBuffs.shrink ? 0.7 : 1.0); // shrink hitbox
       const dxp = b.x - player.x,
             dyp = b.y - player.y,
             r   = (b.type==='spike' ? ballRadius/3 : ballRadius) + effectiveRadius;
@@ -592,6 +1130,23 @@ document.addEventListener('DOMContentLoaded', () => {
           
           // Clear all active buffs on death
           activeBuffs = {};
+          
+          // Reset ability cooldowns
+          abilityChargeTime = 0;
+          abilityReady = false;
+          abilityActive = false;
+          isEnemyDizzy = false;
+          enemyDizzyTime = 0;
+          dizzyPointTimer = 0;
+          
+          // Reset character-specific ability states
+          edgarJumping = false;
+          edgarJumpTime = 0;
+          hankBubble = null;
+          fangChaining = false;
+          fangChainTargets = [];
+          fangCurrentTarget = 0;
+          frozenSpikes = [];
           
           // Reset cube spawn timer
           cubeSpawnTimer = cubeSpawnInterval;
@@ -773,6 +1328,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // draw enemy
     if (enemyImage.complete) {
+      ctx.save();
+      
+      // Add dizzy effect to enemy when dizzy
+      if (isEnemyDizzy) {
+        // Swaying motion
+        const swayTime = performance.now() / 200;
+        const swayX = Math.sin(swayTime) * 5;
+        const swayY = Math.cos(swayTime * 1.3) * 3;
+        
+        // Spinning stars around enemy
+        const time = performance.now() / 500;
+        for (let i = 0; i < 3; i++) {
+          const starAngle = (i / 3) * Math.PI * 2 + time;
+          const starDistance = enemySize/2 + 25;
+          const starX = enemy.x + Math.cos(starAngle) * starDistance;
+          const starY = enemy.y + Math.sin(starAngle) * starDistance - 20;
+          
+          ctx.fillStyle = '#ff69b4';
+          ctx.font = 'bold 16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('★', starX, starY);
+        }
+        
+        ctx.translate(swayX, swayY);
+      }
+      
       ctx.drawImage(
         enemyImage,
         enemy.x - enemySize/2,
@@ -780,6 +1362,8 @@ document.addEventListener('DOMContentLoaded', () => {
         enemySize,
         enemySize
       );
+      
+      ctx.restore();
     }
 
     // draw player with scale effect and invulnerability flashing
@@ -889,16 +1473,51 @@ document.addEventListener('DOMContentLoaded', () => {
       const size = (b.type==='spike' ? ballSize/3 : ballSize),
             half = size/2;
       
+      // Check if this spike is frozen (with safety check)
+      const isFrozen = frozenSpikes && frozenSpikes.length > 0 && frozenSpikes.some(frozen => frozen && frozen.spike === b);
+      
       ctx.save();
       ctx.translate(b.x, b.y);
       ctx.rotate(b.rotation);
       
+      // Frozen spike effects
+      if (isFrozen) {
+        // Ice-blue glow
+        ctx.globalAlpha = 0.6;
+        ctx.fillStyle = '#00ffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, (size/2) * 1.5, 0, 2 * Math.PI);
+        ctx.fill();
+        
+        // Ice crystals effect
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 6; i++) {
+          const angle = (i / 6) * Math.PI * 2;
+          const length = (size/2) * 0.8;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(angle) * length, Math.sin(angle) * length);
+          ctx.stroke();
+        }
+        
+        ctx.globalAlpha = 1.0;
+      }
+      
       if (ballImage.complete) {
+        if (isFrozen) {
+          // Tint frozen spikes blue
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.fillStyle = '#aaffff';
+          ctx.fillRect(-half, -half, size, size);
+          ctx.globalCompositeOperation = 'source-over';
+        }
         ctx.drawImage(ballImage, -half, -half, size, size);
       } else {
         ctx.beginPath();
         ctx.arc(0, 0, size/2, 0, 2 * Math.PI);
-        ctx.fillStyle = b.type==='spike' ? 'orange' : 'red';
+        ctx.fillStyle = isFrozen ? '#00ffff' : (b.type==='spike' ? 'orange' : 'red');
         ctx.fill();
       }
       
@@ -916,6 +1535,48 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fill();
       ctx.restore();
     });
+
+    // draw Hank's bubble
+    if (hankBubble) {
+      ctx.save();
+      
+      // Pulsing bubble with transparency
+      const pulseFactor = 1 + Math.sin(hankBubble.pulse) * 0.1;
+      const bubbleRadius = (hankBubble.size / 2) * pulseFactor;
+      const alpha = Math.min(0.6, hankBubble.life / HANK_BUBBLE_DURATION);
+      
+      // Outer glow
+      ctx.globalAlpha = alpha * 0.3;
+      ctx.fillStyle = '#00ffff';
+      ctx.beginPath();
+      ctx.arc(hankBubble.x, hankBubble.y, bubbleRadius * 1.2, 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Main bubble
+      ctx.globalAlpha = alpha * 0.4;
+      ctx.fillStyle = '#00ffff';
+      ctx.beginPath();
+      ctx.arc(hankBubble.x, hankBubble.y, bubbleRadius, 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Bubble outline
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.strokeStyle = '#00ffff';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(hankBubble.x, hankBubble.y, bubbleRadius, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      // Bubble highlights (soap bubble effect)
+      ctx.globalAlpha = alpha * 0.6;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(hankBubble.x - bubbleRadius * 0.3, hankBubble.y - bubbleRadius * 0.3, bubbleRadius * 0.2, 0, 2 * Math.PI);
+      ctx.stroke();
+      
+      ctx.restore();
+    }
 
     // draw power cube
     if (powerCube) {
@@ -1011,6 +1672,55 @@ document.addEventListener('DOMContentLoaded', () => {
       
       buffY += 25;
     });
+    
+    // draw ability charge/cooldown indicator
+    const abilityBarY = buffY + 10;
+    const abilityBarWidth = 200;
+    const abilityBarHeight = 20;
+    const abilityBarX = cw - 15 - abilityBarWidth;
+    
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(abilityBarX, abilityBarY, abilityBarWidth, abilityBarHeight);
+    
+    // Progress bar
+    let progress = 0;
+    let barColor = '#666666';
+    let statusText = '';
+    
+    if (isEnemyDizzy && selectedCharacter === 'fang') {
+      progress = 1 - (enemyDizzyTime / ENEMY_DIZZY_DURATION);
+      barColor = '#ff69b4'; // pink for enemy dizzy
+      statusText = 'ENEMY DIZZY';
+    } else if (abilityReady) {
+      progress = 1;
+      barColor = '#00ff00'; // green when ready
+      statusText = 'READY - SPACE';
+    } else {
+      const currentAbility = abilities[selectedCharacter];
+      const chargeTime = currentAbility ? currentAbility.chargeTime : ABILITY_CHARGE_DURATION;
+      progress = abilityChargeTime / chargeTime;
+      barColor = '#ffff00'; // yellow while charging
+      statusText = 'CHARGING...';
+    }
+    
+    ctx.fillStyle = barColor;
+    ctx.fillRect(abilityBarX, abilityBarY, abilityBarWidth * progress, abilityBarHeight);
+    
+    // Border
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(abilityBarX, abilityBarY, abilityBarWidth, abilityBarHeight);
+    
+    // Ability name and status
+    const ability = abilities[selectedCharacter];
+    if (ability) {
+      ctx.font = 'bold 14px Arial, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`${ability.name}: ${statusText}`, cw - 15, abilityBarY + abilityBarHeight + 5);
+    }
 
     // draw score with enhanced styling (scaled for screen size)
     const scoreText = `SCORE: ${score}`;
