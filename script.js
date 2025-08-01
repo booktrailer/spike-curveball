@@ -43,11 +43,13 @@ document.addEventListener('DOMContentLoaded', () => {
       gameRunning         = true;
       lastTime            = performance.now();  // reset timer
       cubeSpawnTimer      = cubeSpawnInterval; // spawn first cube after interval
+      startBackgroundMusic(); // Start background music when game starts
     });
   } else {
     gameRunning       = true;                  // no menu present
     playerImage.src   = selectedCharacter + '.png';
     cubeSpawnTimer    = cubeSpawnInterval; // spawn first cube after interval
+    startBackgroundMusic(); // Start background music when game starts
   }
 
   /* ——— Pause on tab change ——— */
@@ -97,6 +99,60 @@ document.addEventListener('DOMContentLoaded', () => {
   // ——— Background image setup ———
   const bgImage = new Image();
   bgImage.src   = 'background.png';  // your 1:1 image
+
+  // ——— Audio setup ———
+  const hitSounds = {
+    hank: new Audio(),
+    edgar: new Audio(),
+    fang: new Audio()
+  };
+  
+  // Background music
+  const bgMusic = new Audio();
+  bgMusic.src = 'sounds/bgm.mp3';
+  bgMusic.loop = true; // Loop the background music
+  bgMusic.volume = 0.3; // Lower volume for background music
+  bgMusic.preload = 'auto';
+  
+  // Load character hit sounds
+  hitSounds.hank.src = 'sounds/hank_hit.mp3';
+  hitSounds.edgar.src = 'sounds/edgar_hit.mp3';
+  hitSounds.fang.src = 'sounds/fang_hit.mp3';
+  
+  // Set volume and preload
+  Object.values(hitSounds).forEach(sound => {
+    sound.volume = 0.7; // Adjust volume as needed
+    sound.preload = 'auto';
+  });
+  
+  function playHitSound(character) {
+    try {
+      const sound = hitSounds[character];
+      if (sound) {
+        sound.currentTime = 0; // Reset to start
+        sound.play().catch(e => console.log('Audio play failed:', e));
+      }
+    } catch (e) {
+      console.log('Audio error:', e);
+    }
+  }
+  
+  function startBackgroundMusic() {
+    try {
+      bgMusic.play().catch(e => console.log('Background music play failed:', e));
+    } catch (e) {
+      console.log('Background music error:', e);
+    }
+  }
+  
+  function stopBackgroundMusic() {
+    try {
+      bgMusic.pause();
+      bgMusic.currentTime = 0;
+    } catch (e) {
+      console.log('Background music stop error:', e);
+    }
+  }
 
   // ——— Player setup ———
   const spriteSize = Math.min(cw, ch) < 600 ? 90 : 125; // smaller on small screens
@@ -1102,6 +1158,9 @@ document.addEventListener('DOMContentLoaded', () => {
         shakeIntensity = 10;
         createExplosion(player.x, player.y, 8);
         
+        // Play character-specific hit sound
+        playHitSound(selectedCharacter);
+        
         // Reduce HP and make player invulnerable
         playerHP--;
         player.invulnerable = true;
@@ -1151,6 +1210,9 @@ document.addEventListener('DOMContentLoaded', () => {
           // Reset cube spawn timer
           cubeSpawnTimer = cubeSpawnInterval;
           powerCube = null;
+          
+          // Stop background music
+          stopBackgroundMusic();
           
           // Start fade transition
           gameOverFade = 1.0;
